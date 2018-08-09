@@ -5,6 +5,7 @@ import 'package:xml/xml.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 import 'svg/colors.dart';
+import 'svg/defs_definition.dart';
 import 'svg/parsers.dart';
 import 'svg/xml_parsers.dart';
 import 'utilities/xml.dart';
@@ -43,6 +44,42 @@ class DrawableSvgShape extends DrawableShape {
           defaultStrokeIfNotSpecified: defaultStroke),
     );
   }
+
+  /// Generates DrawableSvgShape from saved <defs>.
+  factory DrawableSvgShape.fromDefs(
+      String id,
+      DefsDefinitionServer defsDefinitions,
+      DrawableDefinitionServer definitions,
+      DrawableStyle parentStyle) {
+    assert(id != null && id != '');
+    if (!defsDefinitions.containsKey(id)) {
+      return null;
+    }
+
+    final DefsDefinition defsDefinition = defsDefinitions.get(id);
+
+    final Color defaultFill = parentStyle == null || parentStyle.fill == null
+        ? colorBlack
+        : identical(parentStyle.fill, DrawableStyle.emptyPaint)
+            ? null
+            : parentStyle.fill.color;
+
+    final Color defaultStroke =
+        identical(parentStyle.stroke, DrawableStyle.emptyPaint)
+            ? null
+            : parentStyle?.stroke?.color;
+
+    // print(defaultStroke);
+
+    final Path path = defsDefinition.path;
+    return new DrawableSvgShape(
+      defsDefinition.transformedPath,
+      parseStyleFromDefs(
+          defsDefinition, definitions, path.getBounds(), parentStyle,
+          defaultFillIfNotSpecified: defaultFill,
+          defaultStrokeIfNotSpecified: defaultStroke),
+    );
+  }
 }
 
 /// Creates a [Drawable] from an SVG <g> or shape element.  Also handles parsing <defs> and gradients.
@@ -50,7 +87,7 @@ class DrawableSvgShape extends DrawableShape {
 /// If an unsupported element is encountered, it will be created as a [DrawableNoop].
 Drawable parseSvgElement(
     XmlElement el,
-    XmlDefinitionServer xmlDefinitions,
+    DefsDefinitionServer defsDefinitions,
     DrawableDefinitionServer definitions,
     Rect bounds,
     DrawableStyle parentStyle,
@@ -65,7 +102,12 @@ Drawable parseSvgElement(
     for (XmlElement def in defs) {
       final String id = getAttribute(def, 'id');
       if (id != null) {
-        xmlDefinitions.addXmlElement(id, def);
+        final DefsDefinition defsDefinition = DefsDefinition.parse(def);
+        if (defsDefinition != null) {
+          defsDefinitions.add(id, defsDefinition);
+        } else {
+          unhandled(def);
+        }
       } else {
         unhandled(def);
       }
@@ -77,7 +119,7 @@ Drawable parseSvgElement(
     return new DrawableNoop(el.name.local);
   } else if (el.name.local == 'g' || el.name.local == 'a') {
     return parseSvgGroup(
-        el, xmlDefinitions, definitions, bounds, parentStyle, key);
+        el, defsDefinitions, definitions, bounds, parentStyle, key);
   } else if (el.name.local == 'text') {
     return parseSvgText(el, definitions, bounds, parentStyle);
   } else if (el.name.local == 'use') {
@@ -86,13 +128,10 @@ Drawable parseSvgElement(
       if (id.startsWith('#')) {
         id = id.substring(1); // Chop off '#'.
       }
-      final XmlElement def = xmlDefinitions.getXmlElement(id);
-      if (def != null) {
-        final SvgPathFactory pathFn = svgPathParsers[def.name.local];
-        if (pathFn != null) {
-          return DrawableSvgShape.parse(pathFn, definitions, def, parentStyle);
-        }
-        unhandled(def);
+      final DrawableSvgShape shape = new DrawableSvgShape.fromDefs(
+          id, defsDefinitions, definitions, parentStyle);
+      if (shape != null) {
+        return shape;
       }
     }
     unhandled(el);
@@ -218,7 +257,7 @@ Drawable parseSvgText(XmlElement el, DrawableDefinitionServer definitions,
 /// Parses an SVG <g> element.
 Drawable parseSvgGroup(
     XmlElement el,
-    XmlDefinitionServer xmlDefinitions,
+    DefsDefinitionServer defsDefinitions,
     DrawableDefinitionServer definitions,
     Rect bounds,
     DrawableStyle parentStyle,
@@ -229,7 +268,7 @@ Drawable parseSvgGroup(
   for (XmlNode child in el.children) {
     if (child is XmlElement) {
       final Drawable el = parseSvgElement(
-          child, xmlDefinitions, definitions, bounds, style, key);
+          child, defsDefinitions, definitions, bounds, style, key);
       if (el != null) {
         children.add(el);
       }
@@ -275,17 +314,54 @@ DrawableStyle parseStyle(XmlElement el, DrawableDefinitionServer definitions,
   );
 }
 
-// Contains XmlElements that can be referenced by a String ID.
-class XmlDefinitionServer {
-  final Map<String, XmlElement> _xmlElements = <String, XmlElement>{};
+/// Parses style attributes or @style attribute.
+///
+/// Remember that @style attribute takes precedence.
+DrawableStyle parseStyleFromDefs(
+    DefsDefinition defsDefinition,
+    DrawableDefinitionServer definitions,
+    Rect bounds,
+    DrawableStyle parentStyle,
+    {bool needsTransform = false,
+    Color defaultFillIfNotSpecified,
+    Color defaultStrokeIfNotSpecified}) {
+  final Matrix4 transform = needsTransform ? defsDefinition.transform : null;
 
-  XmlElement getXmlElement(String id) {
+  return DrawableStyle.mergeAndBlend(
+    parentStyle,
+    transform: transform?.storage,
+    stroke: parseStrokeFromDefs(
+        defsDefinition, bounds, definitions, defaultStrokeIfNotSpecified),
+    dashArray: defsDefinition.dashArray,
+    dashOffset: defsDefinition.dashOffset,
+    fill: parseFillFromDefs(
+        defsDefinition, bounds, definitions, defaultFillIfNotSpecified),
+    pathFillType: defsDefinition.fillRule,
+    groupOpacity: defsDefinition.opacity,
+    clipPath: parseClipPathFromDefs(defsDefinition, definitions),
+    textStyle: new DrawableTextStyle(
+      fontFamily: defsDefinition.fontFamily,
+      fontSize: parseFontSize(defsDefinition.fontSize,
+          parentValue: parentStyle?.textStyle?.fontSize),
+      height: -1.0,
+    ),
+  );
+}
+
+// Contains DefsDefinitions that can be referenced by a String ID.
+class DefsDefinitionServer {
+  final Map<String, DefsDefinition> _defsDefinitions =
+      <String, DefsDefinition>{};
+
+  bool containsKey(String id) => _defsDefinitions.containsKey(id);
+
+  DefsDefinition get(String id) {
     assert(id != null);
-    return _xmlElements[id];
+    return _defsDefinitions[id];
   }
 
-  void addXmlElement(String id, XmlElement el) {
+  void add(String id, DefsDefinition el) {
     assert(id != null);
-    _xmlElements[id] = el;
+    _defsDefinitions[id] = el;
   }
 }

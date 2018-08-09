@@ -8,6 +8,7 @@ import 'package:xml/xml.dart';
 import '../utilities/xml.dart';
 import '../vector_drawable.dart';
 import 'colors.dart';
+import 'defs_definition.dart';
 import 'parsers.dart';
 
 typedef Path SvgPathFactory(XmlElement el);
@@ -503,4 +504,95 @@ Path applyTransformIfNeeded(Path path, XmlElement el) {
   } else {
     return path;
   }
+}
+
+/// Parses a @stroke attribute into a [Paint].
+Paint parseStrokeFromDefs(DefsDefinition defsDefinition, Rect bounds,
+    DrawableDefinitionServer definitions, Color defaultStrokeIfNotSpecified) {
+  final String rawStroke = defsDefinition.stroke;
+  final String rawOpacity = defsDefinition.strokeOpacity;
+
+  final double opacity =
+      rawOpacity == '' ? 1.0 : double.parse(rawOpacity).clamp(0.0, 1.0);
+
+  if (rawStroke == '') {
+    if (defaultStrokeIfNotSpecified == null) {
+      return null;
+    }
+    return new Paint()
+      ..style = PaintingStyle.stroke
+      ..color = defaultStrokeIfNotSpecified.withOpacity(opacity);
+  } else if (rawStroke == 'none') {
+    return DrawableStyle.emptyPaint;
+  }
+
+  if (rawStroke.startsWith('url')) {
+    return _getDefinitionPaint(rawStroke, definitions, bounds,
+        opacity: opacity);
+  }
+
+  final Paint paint = new Paint()
+    ..color = parseColor(rawStroke).withOpacity(opacity)
+    ..style = PaintingStyle.stroke;
+
+  final String rawStrokeCap = defsDefinition.strokeLinecap;
+  paint.strokeCap = rawStrokeCap == 'null'
+      ? StrokeCap.butt
+      : StrokeCap.values.firstWhere(
+          (StrokeCap sc) => sc.toString() == 'StrokeCap.$rawStrokeCap',
+          orElse: () => StrokeCap.butt);
+
+  final String rawLineJoin = defsDefinition.strokeLinejoin;
+  paint.strokeJoin = rawLineJoin == ''
+      ? StrokeJoin.miter
+      : StrokeJoin.values.firstWhere(
+          (StrokeJoin sj) => sj.toString() == 'StrokeJoin.$rawLineJoin',
+          orElse: () => StrokeJoin.miter);
+
+  final String rawMiterLimit = defsDefinition.strokeMiterlimit;
+  paint.strokeMiterLimit =
+      rawMiterLimit == '' ? 4.0 : double.parse(rawMiterLimit);
+
+  final String rawStrokeWidth = defsDefinition.strokeWidth;
+  paint.strokeWidth = rawStrokeWidth == '' ? 1.0 : double.parse(rawStrokeWidth);
+
+  return paint;
+}
+
+Paint parseFillFromDefs(DefsDefinition defsDefinition, Rect bounds,
+    DrawableDefinitionServer definitions, Color defaultFillIfNotSpecified) {
+  final String rawFill = defsDefinition.fill;
+  final String rawOpacity = defsDefinition.fillOpacity;
+
+  final double opacity =
+      rawOpacity == '' ? 1.0 : double.parse(rawOpacity).clamp(0.0, 1.0);
+
+  if (rawFill == '') {
+    if (defaultFillIfNotSpecified == null) {
+      return null;
+    }
+    return new Paint()..color = defaultFillIfNotSpecified.withOpacity(opacity);
+  } else if (rawFill == 'none') {
+    return DrawableStyle.emptyPaint;
+  }
+
+  if (rawFill.startsWith('url')) {
+    return _getDefinitionPaint(rawFill, definitions, bounds, opacity: opacity);
+  }
+
+  final Color fill = parseColor(rawFill).withOpacity(opacity);
+
+  return new Paint()
+    ..color = fill
+    ..style = PaintingStyle.fill;
+}
+
+List<Path> parseClipPathFromDefs(
+    DefsDefinition defsDefinition, DrawableDefinitionServer definitions) {
+  final String rawClipAttribute = defsDefinition.clipPath;
+  if (rawClipAttribute != '') {
+    return definitions.getClipPath(rawClipAttribute);
+  }
+
+  return null;
 }

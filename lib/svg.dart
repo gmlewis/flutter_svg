@@ -99,7 +99,7 @@ class Svg {
     final XmlElement svg = xml.parse(rawSvg).rootElement;
     final Rect viewBox = parseViewBox(svg);
     //final Map<String, PaintServer> paintServers = <String, PaintServer>{};
-    final XmlDefinitionServer xmlDefinitions = new XmlDefinitionServer();
+    final DefsDefinitionServer defsDefinitions = new DefsDefinitionServer();
     final DrawableDefinitionServer definitions = new DrawableDefinitionServer();
     final DrawableStyle style = parseStyle(svg, definitions, viewBox, null);
 
@@ -108,7 +108,7 @@ class Svg {
         .map(
           (XmlNode child) => parseSvgElement(
                 child,
-                xmlDefinitions,
+                defsDefinitions,
                 definitions,
                 viewBox,
                 style,
